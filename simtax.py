@@ -4,6 +4,7 @@ SIMple input-output capabilities for TAX-calculator.
 # CODING-STYLE CHECKS:
 # pep8 --ignore=E402 simtax.py
 # pylint --disable=locally-disabled simtax.py
+# (when importing numpy, add "--extension-pkg-whitelist=numpy" pylint option)
 
 import argparse
 import sys
@@ -16,16 +17,20 @@ def main():
     """
     # parse command-line arguments:
     parser = argparse.ArgumentParser(
+        prog='python simtax.py',
         description=('Writes to a file the federal tax OUTPUT for the tax '
                      'filing units specified in the INPUT file with the '
                      'OUTPUT computed from the INPUT using the Tax-Calculator.'
                      ' Both the INPUT and OUTPUT files use Internet-TAXSIM '
                      'format.  The OUTPUT filename is the INPUT filename '
-                     'with the ".out-simtax" string appended.  The OUTPUT '
-                     'file contains the first 28 Internet-TAXSIM output '
-                     'variables.  Use --iohelp flag for more information. '
-                     'For details on Internet-TAXSIM version 9.3 INPUT and '
-                     'OUTPUT formats, go to '
+                     'with the ".out-simtax" string appended if no --reform '
+                     'option is specified; otherwise the OUTPUT filename is '
+                     'the INPUT filename with the ".out-simtax-REFORM" string '
+                     'appended (excluding any ".json" ending to the REFORM '
+                     'filename).  The OUTPUT file contains the first 28 '
+                     'Internet-TAXSIM output variables.  Use --iohelp flag '
+                     'for more information.  For details on Internet-TAXSIM '
+                     'version 9.3 INPUT and OUTPUT formats, go to '
                      'http://users.nber.org/~taxsim/taxsim-calc9/'))
     parser.add_argument('--iohelp',
                         help=('optional flag to show INPUT and OUTPUT '
@@ -62,9 +67,9 @@ def main():
         return 0
     # instantiate SimpleTaxIO object and do tax calculations
     simtax = SimpleTaxIO(input_filename=args.INPUT,
-                         reform_filename=args.reform,
+                         reform=args.reform,
                          emulate_taxsim_2441_logic=args.taxsim2441)
-    simtax.calculate()
+    simtax.calculate(writing_output_file=True)
     # return no-error exit code
     return 0
 # end of main function code

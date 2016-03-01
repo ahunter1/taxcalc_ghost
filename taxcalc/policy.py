@@ -3,7 +3,8 @@ Tax-Calculator federal tax policy Policy class.
 """
 # CODING-STYLE CHECKS:
 # pep8 --ignore=E402 policy.py
-# pylint --disable=locally-disabled policy.py
+# pylint --disable=locally-disabled --extension-pkg-whitelist=numpy policy.py
+# (when importing numpy, add "--extension-pkg-whitelist=numpy" pylint option)
 
 
 import os
@@ -37,6 +38,10 @@ class Policy(ParametersBase):
         variable inflation rates used to project future policy parameter
         values; if None, default inflation rates (specified below) are used.
 
+    wage_growth_rates: dictionary of YEAR:RATE pairs
+        variable wage growth rates used to project future policy parameter
+        values; if None, default wage growth rates (specified below) are used.
+
     Raises
     ------
     ValueError:
@@ -52,18 +57,20 @@ class Policy(ParametersBase):
 
     DEFAULTS_FILENAME = 'current_law_policy.json'
     JSON_START_YEAR = 2013  # remains the same unless earlier data added
-    FIRST_BUDGET_YEAR = 2015  # increases by one every calendar year
-    NUM_BUDGET_YEARS = 10  # fixed by federal government budgeting rules
-    DEFAULT_NUM_YEARS = NUM_BUDGET_YEARS + FIRST_BUDGET_YEAR - JSON_START_YEAR
+    LAST_BUDGET_YEAR = 2026  # increases by one every calendar year
+    DEFAULT_NUM_YEARS = LAST_BUDGET_YEAR - JSON_START_YEAR + 1
 
     # default price inflation rates by year
-    __pirates = {2013: 0.015, 2014: 0.020, 2015: 0.021, 2016: 0.020,
-                 2017: 0.021, 2018: 0.022, 2019: 0.023, 2020: 0.024,
-                 2021: 0.024, 2022: 0.024, 2023: 0.024, 2024: 0.024}
+    __pirates = {2013: 0.0148, 2014: 0.0159, 2015: 0.0013, 2016: 0.0135,
+                 2017: 0.0233, 2018: 0.0236, 2019: 0.0238, 2020: 0.0245,
+                 2021: 0.0242, 2022: 0.0240, 2023: 0.0239, 2024: 0.0240,
+                 2025: 0.0245, 2026: 0.0242}
 
-    __wgrates = {2013: 0.0276, 2014: 0.0419, 2015: 0.0465, 2016: 0.0498,
-                 2017: 0.0507, 2018: 0.0481, 2019: 0.0451, 2020: 0.0441,
-                 2021: 0.0437, 2022: 0.0435, 2023: 0.0430, 2024: 0.0429}
+    # default wage growth rates by year
+    __wgrates = {2013: 0.0276, 2014: 0.0496, 2015: 0.0477, 2016: 0.0479,
+                 2017: 0.0441, 2018: 0.0420, 2019: 0.0383, 2020: 0.0381,
+                 2021: 0.0403, 2022: 0.0413, 2023: 0.0417, 2024: 0.0417,
+                 2025: 0.0415, 2026: 0.0416}
 
     @staticmethod
     def default_inflation_rates():
@@ -81,6 +88,7 @@ class Policy(ParametersBase):
         """
         return Policy.__pirates
 
+    @staticmethod
     def default_wage_growth_rates():
         """
         Return complete default wage growth rate dictionary.
@@ -104,6 +112,7 @@ class Policy(ParametersBase):
         """
         Policy class constructor.
         """
+        # pylint: disable=too-many-arguments
         # pylint: disable=super-init-not-called
         if parameter_dict:
             if not isinstance(parameter_dict, dict):
@@ -144,9 +153,15 @@ class Policy(ParametersBase):
 
     def inflation_rates(self):
         """
-        Returns list of price inflation rates starting with JSON_START_YEAR
+        Returns list of price inflation rates starting with JSON_START_YEAR.
         """
         return self._inflation_rates
+
+    def wage_growth_rates(self):
+        """
+        Returns list of wage growth rates starting with JSON_START_YEAR.
+        """
+        return self._wage_growth_rates
 
     @staticmethod
     def read_json_reform_file(reform_filename):
@@ -196,7 +211,7 @@ class Policy(ParametersBase):
                     raise ValueError(msg.format(skey))
                 else:
                     year = int(skey)
-                rdict[year] = (np.array(val)  # pylint: disable=no-member
+                rdict[year] = (np.array(val)
                                if isinstance(val, list) else val)
             reform_pkey_param[pkey] = rdict
         # convert reform_pkey_param dictionary to reform_pkey_year dictionary
@@ -204,7 +219,7 @@ class Policy(ParametersBase):
 
     def implement_reform(self, reform):
         """
-        Implement multi-year policy reform and set current_year=start_year.
+        Implement multi-year policy reform and leave current_year unchanged.
 
         Parameters
         ----------
@@ -219,6 +234,7 @@ class Policy(ParametersBase):
             if reform is not a dictionary.
             if each YEAR in reform is not an integer.
             if minimum YEAR in the YEAR:MODS pairs is less than start_year.
+            if minimum YEAR in the YEAR:MODS pairs is less than current_year.
             if maximum YEAR in the YEAR:MODS pairs is greater than end_year.
 
         Returns
@@ -237,7 +253,8 @@ class Policy(ParametersBase):
         policy object (policy) containing current-law policy parameters,
         and the implement_reform(reform) call applies the (possibly
         multi-year) reform specified in reform and then sets the
-        current_year to start_year with parameters set for that year.
+        current_year to the value of current_year when implement_reform
+        was called with parameters set for that pre-call year.
 
         An example of a multi-year, multi-parameter reform is as follows::
 
@@ -265,8 +282,6 @@ class Policy(ParametersBase):
         required by the private _update method, whose documentation
         provides several MODS dictionary examples.
         """
-        if self.current_year != self.start_year:
-            self.set_year(self.start_year)
         if not isinstance(reform, dict):
             msg = 'reform passed to implement_reform is not a dictionary'
             ValueError(msg)
@@ -281,15 +296,18 @@ class Policy(ParametersBase):
         if first_reform_year < self.start_year:
             msg = 'reform provision in year={} < start_year={}'
             ValueError(msg.format(first_reform_year, self.start_year))
+        if first_reform_year < self.current_year:
+            msg = 'reform provision in year={} < current_year={}'
+            ValueError(msg.format(first_reform_year, self.current_year))
         last_reform_year = max(reform_years)
         if last_reform_year > self.end_year:
             msg = 'reform provision in year={} > end_year={}'
             ValueError(msg.format(last_reform_year, self.end_year))
+        precall_current_year = self.current_year
         for year in reform_years:
-            if year != self.start_year:
-                self.set_year(year)
+            self.set_year(year)
             self._update({year: reform[year]})
-        self.set_year(self.start_year)
+        self.set_year(precall_current_year)
 
     # ----- begin private methods of Policy class -----
 

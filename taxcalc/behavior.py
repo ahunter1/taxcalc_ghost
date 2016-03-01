@@ -4,77 +4,109 @@ from .policy import Policy
 from .parameters_base import ParametersBase
 
 
-def update_income(behavioral_effect, calc_y):
-    delta_inc = np.where(calc_y.records.c00100 > 0, behavioral_effect, 0)
+def update_ordinary_income(behavioral_effect, calc_y):
+    delta_inc = np.where(calc_y.records.c00100 > 0, behavioral_effect, 0.)
 
     # Attribute the behavioral effects across itemized deductions,
     # wages, and other income.
 
-    _itemized = np.where(calc_y.records.c04470 < calc_y.records._standard,
-                         0,
-                         calc_y.records.c04470)
+    itemized = np.where(calc_y.records.c04470 < calc_y.records._standard,
+                        0.,
+                        calc_y.records.c04470)
 
-    delta_wages = np.where(calc_y.records.c00100 + _itemized > 0,
+    delta_wages = np.where(calc_y.records.c00100 + itemized > 0,
                            (delta_inc * calc_y.records.e00200 /
-                            (calc_y.records.c00100 + _itemized)),
-                           0)
+                            (calc_y.records.c00100 + itemized)),
+                           0.)
 
     other_inc = calc_y.records.c00100 - calc_y.records.e00200
 
-    delta_other_inc = np.where(calc_y.records.c00100 + _itemized > 0,
+    delta_other_inc = np.where(calc_y.records.c00100 + itemized > 0,
                                (delta_inc * other_inc /
-                                (calc_y.records.c00100 + _itemized)),
-                               0)
+                                (calc_y.records.c00100 + itemized)),
+                               0.)
 
-    delta_itemized = np.where(calc_y.records.c00100 + _itemized > 0,
-                              (delta_inc * _itemized /
-                               (calc_y.records.c00100 + _itemized)),
-                              0)
+    delta_itemized = np.where(calc_y.records.c00100 + itemized > 0,
+                              (delta_inc * itemized /
+                               (calc_y.records.c00100 + itemized)),
+                              0.)
 
     calc_y.records.e00200 = calc_y.records.e00200 + delta_wages
 
     calc_y.records.e00300 = calc_y.records.e00300 + delta_other_inc
 
-    calc_y.records.e19570 = np.where(_itemized > 0,
-                                     calc_y.records.e19570 + delta_itemized, 0)
+    calc_y.records.e19570 = np.where(itemized > 0,
+                                     calc_y.records.e19570 + delta_itemized,
+                                     0.)
     # TODO, we should create a behavioral modification
     # variable instead of using e19570
-
-    calc_y.calc_all()
 
     return calc_y
 
 
-def behavior(calc_x, calc_y, update_income=update_income):
+def update_cap_gain_income(cap_gain_behavioral_effect, calc_y):
+    calc_y.records.p23250 = calc_y.records.p23250 + cap_gain_behavioral_effect
+    return calc_y
+
+
+def behavior(calc_x, calc_y):
     """
     Modify plan Y records to account for micro-feedback effect that arrise
     from moving from plan X to plan Y.
     """
 
     # Calculate marginal tax rates for plan x and plan y.
-    _, _, combined_mtr_x = calc_x.mtr()
-    mtr_x = combined_mtr_x
+    wage_mtr_x, wage_mtr_y = mtr_xy(calc_x, calc_y,
+                                    mtr_of='e00200p',
+                                    liability_type='combined')
 
-    _, _, combined_mtr_y = calc_y.mtr()
-    mtr_y = combined_mtr_y
+    CG_mtr_x, CG_mtr_y = mtr_xy(calc_x, calc_y,
+                                mtr_of='p23250',
+                                liability_type='iitax')
 
-    # Calculate the percent change in after-tax rate.
-    pct_diff_atr = ((1 - mtr_y) - (1 - mtr_x)) / (1 - mtr_x)
+    # Calculate the percent change in after-tax rate for wage and capital gain.
+    wage_pctdiff = ((1 - wage_mtr_y) - (1 - wage_mtr_x)) / (1 - wage_mtr_x)
+    CG_pctdiff = ((1 - CG_mtr_y) - (1 - CG_mtr_x)) / (1 - CG_mtr_x)
 
-    # Calculate the magnitude of the substitution and income effects.
-    substitution_effect = (calc_y.behavior.BE_sub * pct_diff_atr *
+    # Calculate the magnitude of the substitution and income effects
+    # Calculate the magnitude of behavior changes on cap gain
+    substitution_effect = (calc_y.behavior.BE_sub * wage_pctdiff *
                            (calc_x.records.c04800))
 
-    income_effect = calc_y.behavior.BE_inc * (calc_y.records._iitax -
-                                              calc_x.records._iitax)
-    calc_y_behavior = copy.deepcopy(calc_y)
+    income_effect = calc_y.behavior.BE_inc * (calc_y.records._combined -
+                                              calc_x.records._combined)
 
     combined_behavioral_effect = income_effect + substitution_effect
 
-    calc_y_behavior = update_income(combined_behavioral_effect,
-                                    calc_y_behavior)
+    cap_gain_behavioral_effect = (calc_y.behavior.BE_CG_per * CG_pctdiff *
+                                  (calc_x.records.p23250))
+
+    # Add the behavior changes to income sources
+    calc_y_behavior = copy.deepcopy(calc_y)
+    calc_y_behavior = update_ordinary_income(combined_behavioral_effect,
+                                             calc_y_behavior)
+    calc_y_behavior = update_cap_gain_income(cap_gain_behavioral_effect,
+                                             calc_y_behavior)
+
+    # Takes all income updates into considaration
+    calc_y_behavior.calc_all()
 
     return calc_y_behavior
+
+
+def mtr_xy(calc_x, calc_y, mtr_of='e00200p', liability_type='combined'):
+
+    payroll_x, iitax_x, combined_x = calc_x.mtr(mtr_of)
+    payroll_y, iitax_y, combined_y = calc_y.mtr(mtr_of)
+
+    if liability_type == 'combined':
+        return (combined_x, combined_y)
+    elif liability_type == 'payroll':
+        return (payroll_x, payroll_y)
+    elif liability_type == 'iitax':
+        return (iitax_x, iitax_y)
+    else:
+        raise ValueError('Choose from combined, iitax, and payroll.')
 
 
 class Behavior(ParametersBase):
